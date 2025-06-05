@@ -6,6 +6,8 @@ LDFLAGS := -flto=auto
 SOURCES := nat64.c addrmap.c dynamic.c tayga.c conffile.c
 TARGET := tayga
 TARGET-COV := $(TARGET)-cov
+INSTALL := install
+PREFIX ?= /usr/local
 
 all: $(TARGET)
 cov: $(TARGET-COV)
@@ -67,10 +69,22 @@ clean:
 	$(RM) $(TARGET) tayga.d version.h $(TARGET-COV) tayga-nat64.tar tayga-clat.tar
 	$(RM) *.gcda *.gcno *.gcov
 
-install: $(TARGET)
-	# TODO
+install: install-bin install-man install-service
+
+install-bin: $(TARGET)
+	$(INSTALL) -m 755 tayga $(DESTDIR)$(PREFIX)/bin/tayga
+
+install-man:
+	$(INSTALL) -D tayga.8 $(DESTDIR)$(PREFIX)/share/man/man8
+	$(INSTALL) -D tayga.conf.5 $(DESTDIR)$(PREFIX)/share/man/man5
+
+install-service:
+	$(INSTALL) -D tayga.service tayga@.service $(DESTDIR)$(PREFIX)/lib/systemd/system
 
 uninstall:
-	# TODO
+	$(RM) $(PREFIX)/bin/tayga
+	$(RM) $(PREFIX)/share/man/man8/tayga.8 $(PREFIX)/share/man/man5/tayga.conf.8
+	$(RM) $(PREFIX)/lib/systemd/system/tayga.service
+	$(RM) $(PREFIX)/lib/systemd/system/tayga@.service
 
 .PHONY: all clean install uninstall cov-report

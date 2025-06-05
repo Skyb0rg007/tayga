@@ -2,7 +2,7 @@
 
 This example configures Tayga to perform stateless CLAT function, used in 464xlat. This provides IPv4 functionality to the local system, relying on the network to provide NAT64. 
 
-None of these scripts are intended to be utilized as a best practice for actually running a CLAT. Details such as generaing random SLAAC addresses, duplicate address discovery, etc. are skipped to demonstrate the function of the CLAT.
+None of these scripts are intended to be utilized as a best practice for actually running a CLAT. Details such as generating random SLAAC addresses, duplicate address discovery, etc. are skipped to demonstrate the function of the CLAT.
 
 In all cases, we require two addresses - one is used along with Tayga's `map` directive to map IPv4 user traffic to IPv6, the other is used by Tayga as its own address as the source of ICMPv6 error messages. For simplicity, all examples use two addresses in a `/127` pair (i.e. two addresses which differ only by their last bit).
 
