@@ -8,12 +8,16 @@ LDLIBS ?=
 prefix ?= /usr/local
 exec_prefix ?= $(prefix)
 sbindir ?= $(exec_prefix)/sbin
+libdir ?= $(prefix)/lib
+sysconfdir ?= $(prefix)/etc
 datarootdir ?= $(prefix)/share
 mandir ?= $(datarootdir)/man
 man5dir ?= $(mandir)/man5
 man5ext ?= .5
 man8dir ?= $(mandir)/man8
 man8ext ?= .8
+systemddir ?= $(libdir)/systemd
+systemdservicedir ?= $(systemddir)/system
 
 INSTALL ?= install
 INSTALL_PROGRAM ?= $(INSTALL)
@@ -39,7 +43,7 @@ tayga: $(HEADERS) $(SOURCES)
 	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $(SOURCES) $(LDLIBS)
 
 clean:
-	$(RM) tayga version.h
+	$(RM) tayga version.h tayga.service tayga@.service
 
 installdirs:
 	mkdir -p $(DESTDIR)$(sbindir) $(DESTDIR)$(man5dir) $(DESTDIR)$(man8dir)
@@ -49,10 +53,14 @@ install: installdirs
 	-$(INSTALL_DATA) tayga.8 $(DESTDIR)$(man8dir)/tayga$(man8ext)
 	-$(INSTALL_DATA) tayga.conf.5 $(DESTDIR)$(man5dir)/tayga.conf$(man5ext)
 
+install-systemd: tayga.service tayga@.service
+	$(INSTALL_DATA) tayga.service tayga@.service $(DESTDIR)$(systemdservicedir)
+
 uninstall:
 	$(RM) $(DESTDIR)$(sbindir)/tayga
 	$(RM) $(DESTDIR)$(man8dir)/tayga$(man8ext)
 	$(RM) $(DESTDIR)$(man5dir)/tayga.conf$(man5ext)
+	$(RM) $(DESTDIR)$(systemdservicedir)/tayga.service $(DESTDIR)$(systemdservicedir)/tayga@.service
 
 ifndef RELEASE
 version.h:
@@ -60,3 +68,10 @@ version.h:
 	@echo "#define TAYGA_BRANCH \"$(TAYGA_BRANCH)\"" >> version.h
 	@echo "#define TAYGA_COMMIT \"$(TAYGA_COMMIT)\"" >> version.h
 endif
+
+tayga.service: tayga.service.in
+	sed 's:@sysconfdir@:$(sysconfdir):;s:@sbindir@:$(sbindir):' $< > $@
+
+tayga@.service: tayga@.service.in
+	sed 's:@sysconfdir@:$(sysconfdir):;s:@sbindir@:$(sbindir):' $< > $@
+

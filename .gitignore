@@ -1,6 +1,8 @@
 *.o
 tayga
 tayga.conf
+tayga.service
+tayga@.service
 *.tar
 *.d
 tayga-cov

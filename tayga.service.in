@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 PrivateTmp=true
-ExecStart=/usr/sbin/tayga -d --config /etc/tayga.conf
+ExecStart=@sbindir@/tayga -d --config @sysconfdir@/tayga.conf
 
 [Install]
 WantedBy=multi-user.target

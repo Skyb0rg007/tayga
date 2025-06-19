@@ -4,13 +4,14 @@ After=network.target
 
 [Service]
 # To set up an extra tayga service instance, create a new tayga config in
-# /etc/tayga/instancename.conf. Then enable this config as a systemd alias
+# @sysconfdir@/tayga/instancename.conf.
+# Then enable this config as a systemd alias:
 #
 # systemctl enable tayga@instancename.service
 
 Type=simple
 PrivateTmp=true
-ExecStart=/usr/sbin/tayga -d --config /etc/tayga/%i.conf
+ExecStart=@sbindir@/tayga -d --config @sysconfdir@/tayga/%i.conf
 
 [Install]
 WantedBy=multi-user.target

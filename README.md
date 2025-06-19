@@ -18,9 +18,11 @@ TAYGA requires GNU make to build. If you would like to run the test suite, see [
 git clone git@github.com:apalrd/tayga.git
 cd tayga
 make
+sudo make install
 ```
 
-This will build the `tayga` executable in the current directory.
+This will install `tayga` to `/usr/local/sbin`.
+The `install` target supports `DESTDIR`, `prefix` and other GNU standard Makefile variables.
 
 Next, if you would like dynamic maps to be persistent between TAYGA restarts, create a directory to store the dynamic.map file:
 
