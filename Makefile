@@ -1,7 +1,7 @@
 # Simple Makefile generated based on makefile.am
 
 CC := gcc
-CFLAGS := -Wall -O2
+CFLAGS := -Wall -O2 -g
 LDFLAGS := -flto=auto
 SOURCES := nat64.c addrmap.c dynamic.c tayga.c conffile.c
 TARGET := tayga

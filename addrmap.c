@@ -58,7 +58,7 @@ int validate_ip4_addr(const struct in_addr *a)
 	/* Class E considered valid now */
 
 	/* Local Broadcast not considered valid */
-	if (a->s_addr== 0xffffffff)
+	if (a->s_addr == 0xffffffff)
 		return ERROR_DROP;
 
 	return ERROR_NONE;
@@ -309,10 +309,10 @@ static struct cache_entry *cache_insert(const struct in_addr *addr4,
 	return c;
 }
 /**
- * @brief Check if an IPv4 address is in the cache
+ * @brief Check if an IPv4 address is in the mapping table
  *  
  * @param addr4 IPv4 address to check
- * @returns Cache entry, or NULL if none found
+ * @returns Mapping entry, or NULL if none found
  */
 struct map4 *find_map4(const struct in_addr *addr4)
 {
@@ -326,11 +326,12 @@ struct map4 *find_map4(const struct in_addr *addr4)
 	}
 	return NULL;
 }
+
 /**
- * @brief Check if an IPv6 address is in the cache
+ * @brief Check if an IPv6 address is in the mapping table
  *  
  * @param addr6 IPv6 address to check
- * @returns Cache entry, or NULL if none found
+ * @returns Mapping entry, or NULL if none found
  */
 struct map6 *find_map6(const struct in6_addr *addr6)
 {
@@ -344,10 +345,11 @@ struct map6 *find_map6(const struct in6_addr *addr6)
 	}
 	return NULL;
 }
+
 /**
- * @brief Insert an IPv4 entry into the cache
+ * @brief Insert an IPv4 entry into the mapping table
  *  
- * @param map4 Cache entry to add
+ * @param map4 Mapping entry to add
  * @param[out] conflict Pointer to return conflicting object
  * @returns -1 on conflict
  */
@@ -372,10 +374,11 @@ conflict:
 		*conflict = s;
 	return -1;
 }
+
 /**
- * @brief Insert an IPv6 entry into the cache
+ * @brief Insert an IPv6 entry into the mapping table
  *  
- * @param map6 Cache entry to add
+ * @param map6 Mapping entry to add
  * @param[out] conflict Pointer to return conflicting object
  * @returns -1 on conflict
  */
@@ -404,6 +407,7 @@ conflict:
 		*conflict = s;
 	return -1;
 }
+
 /**
  * @brief Append an IPv4 address to an IPv6 translation prefix
  *  

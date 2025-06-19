@@ -118,9 +118,9 @@ static uint16_t convert_cksum(struct ip6 *ip6, struct ip4 *ip4)
 	sum += ip6->dest.s6_addr32[3];
 
 	/* Fold carry-arounds */
-	if(sum > 0xffffffff) sum = (sum & 0xffffffff) + (sum >> 32);
-	if(sum > 0xffff) sum = (sum & 0xffff) + (sum >> 16);
-	if(sum > 0xffff) sum = (sum & 0xffff) + (sum >> 16);
+	sum = (sum & 0xffffffff) + (sum >> 32);
+	sum = (sum & 0xffff) + (sum >> 16);
+	sum = (sum & 0xffff) + (sum >> 16);
 
 	return sum;
 }

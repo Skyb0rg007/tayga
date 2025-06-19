@@ -97,7 +97,7 @@ print(res2)
 # Stop server
 iperf3_srv.kill()
 
-subprocess.run("chown apalrd:apalrd callgrind*",shell=True)
+# subprocess.run("chown apalrd:apalrd callgrind*",shell=True)
 
 time.sleep(1)
 iperfs_log.close()

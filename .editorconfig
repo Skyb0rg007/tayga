@@ -8,7 +8,8 @@ insert_final_newline = true
 
 [*.{c,h,py}]
 indent_style = space
-indent_size = 4
+indent_size = 8
+tab_size = 8
 
 [Makefile]
 indent_style = tab
