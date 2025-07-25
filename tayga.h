@@ -39,6 +39,9 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <linux/if_ether.h>
+#ifdef USE_LIBCAP
+#include <sys/capability.h>
+#endif
 #elif defined(__FreeBSD__)
 #include <net/if.h>
 #include <net/if_tun.h>

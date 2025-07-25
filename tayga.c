@@ -173,6 +173,34 @@ static void tun_setup(int do_mktun, int do_rmtun)
 	slog(LOG_INFO, "Using tun device %s with MTU %d\n", gcfg->tundev,
 			gcfg->mtu);
 }
+
+static void drop_capabilities(void)
+{
+#ifdef USE_LIBCAP
+    cap_t current_caps = cap_get_proc();
+    if (current_caps) {
+        char *text = cap_to_text(current_caps, NULL);
+        slog(LOG_INFO, "Current capabilities: %s\n", text);
+        cap_free(text);
+    }
+
+    cap_t caps = cap_init();
+    if (!caps) {
+        slog(LOG_CRIT, "cap_init() failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    if (cap_set_proc(caps) < 0) {
+        slog(LOG_CRIT, "cap_set_proc() failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    if (cap_free(caps) < 0) {
+        slog(LOG_CRIT, "cap_free() failed: %s\n", strerror(errno));
+        exit(1);
+    }
+#endif /* USE_LIBCAP */
+}
 #endif
 
 #ifdef __FreeBSD__
@@ -278,6 +306,11 @@ static void tun_setup(int do_mktun, int do_rmtun)
 
 	slog(LOG_INFO, "Using tun device %s with MTU %d\n", gcfg->tundev,
 			gcfg->mtu);
+}
+
+static void drop_capabilities(void)
+{
+    // FreeBSD drop_capabilities() not implemented
 }
 #endif
 
@@ -689,6 +722,8 @@ int main(int argc, char **argv)
 			exit(1);
 		}
 	}
+
+	drop_capabilities();
 
 	signal_setup();
 

@@ -4,6 +4,12 @@ CFLAGS ?= -Wall -O2
 LDFLAGS ?= -flto=auto
 SOURCES := nat64.c addrmap.c dynamic.c tayga.c conffile.c
 
+USE_LIBCAP ?=
+ifneq ($(USE_LIBCAP),)
+CFLAGS += -DUSE_LIBCAP $(shell pkg-config --cflags libcap)
+LDFLAGS += $(shell pkg-config --libs libcap)
+endif
+
 #Check for release file / variable
 -include release
 ifdef RELEASE
