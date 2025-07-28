@@ -48,6 +48,9 @@
 #include <netinet/if_ether.h>
 #include <net/ethernet.h>
 #include <sys/uio.h>
+#include <sys/capsicum.h>
+#include <libcasper.h>
+#include <capsicum_helpers.h>
 #else
 #error "Could not find headers for platform"
 #endif
@@ -300,6 +303,7 @@ struct config {
 
 	int urandom_fd;
 	int tun_fd;
+    int data_dir_fd;
 
 	uint16_t mtu;
 	uint8_t *recv_buf;

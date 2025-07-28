@@ -318,9 +318,10 @@ static void tun_setup(int do_mktun, int do_rmtun)
 
 static void drop_capabilities(void)
 {
-    cap_channel_t *cap_chan = cap_init();
+    cap_channel_t *cap_chan;
     cap_rights_t setrights;
 
+    cap_chan = cap_init();
     if (cap_chan == NULL) {
         slog(LOG_CRIT, "Unable to contact Casper, aborting\n");
         exit(1);
@@ -334,7 +335,11 @@ static void drop_capabilities(void)
 
     cap_close(cap_chan);
 
-    if (cap_enter() < 0) {
+    /* Cache NLS data for calls to strerror() */
+    caph_cache_catpages();
+
+    /** Barrier - enter the sandbox **/
+    if (caph_enter() < 0) {
         slog(LOG_CRIT, "Unable to enter capsicum sandbox, aborting: %s\n",
                 strerror(errno));
         exit(1);
@@ -342,21 +347,38 @@ static void drop_capabilities(void)
 
     /* Limit to read(), writev(), poll() */
     cap_rights_init(&setrights, CAP_READ, CAP_WRITE, CAP_EVENT);
-    if (cap_rights_limit(gcfg->tun_fd, &setrights) < 0 && errno != ENOSYS) {
+    if (caph_rights_limit(gcfg->tun_fd, &setrights) < 0) {
         slog(LOG_CRIT, "Unable to limit tun file descriptor rights"
                 "- cap_rights_limit() failed: %s\n",
                 strerror(errno));
         exit(1);
     }
 
-    /* Limit to read() */
-    cap_rights_init(&setrights, CAP_READ);
-    if (cap_rights_limit(gcfg->tun_fd, &setrights) < 0 && errno != ENOSYS) {
-        slog(LOG_CRIT, "Unable to limit /dev/urandom file descriptor rights"
-                "- cap_rights_limit() failed: %s\n",
-                strerror(errno));
-        exit(1);
+    /* Limit /dev/urandom to read() */
+    if (gcfg->urandom_fd >= 0) {
+        cap_rights_init(&setrights, CAP_READ);
+        if (caph_rights_limit(gcfg->urandom_fd, &setrights) < 0) {
+            slog(LOG_CRIT, "Unable to limit /dev/urandom file descriptor rights"
+                    " - cap_rights_limit() failed: %s\n",
+                    strerror(errno));
+            exit(1);
+        }
     }
+
+    /* Limit data dir to the first argument of openat() */
+    if (gcfg->data_dir_fd >= 0) {
+        cap_rights_init(&setrights, CAP_LOOKUP);
+        if (caph_rights_limit(gcfg->data_dir_fd, &setrights) < 0) {
+            slog(LOG_CRIT, "Unable to limit %s file descriptor rights"
+                    " - cap_rights_limit() failed: %s\n",
+                    gcfg->data_dir,
+                    strerror(errno));
+            exit(1);
+        }
+    }
+
+    /* Only matters when not detached, but no harm in being unconditional */
+    caph_limit_stdio();
 }
 #endif
 
@@ -487,14 +509,15 @@ static void print_op_info(void)
 				addrbuf, sizeof(addrbuf));
 		slog(LOG_INFO, "Dynamic pool: %s/%d\n", addrbuf,
 				gcfg->dynamic_pool->map4.prefix_len);
-		if (gcfg->data_dir[0])
-			load_dynamic(gcfg->dynamic_pool);
-		else
-			slog(LOG_NOTICE, "Note: dynamically-assigned mappings "
-					"will not be saved across restarts.  "
-					"Specify data-dir in config if you would "
-					"like dynamic mappings to be "
-					"persistent.\n");
+		if (gcfg->data_dir_fd >= 0) {
+            load_dynamic(gcfg->dynamic_pool);
+        } else {
+            slog(LOG_NOTICE, "Note: dynamically-assigned mappings "
+                    "will not be saved across restarts.  "
+                    "Specify data-dir in config if you would "
+                    "like dynamic mappings to be "
+                    "persistent.\n");
+        }
 	}
 
 	slog(LOG_DEBUG,"Map4 List:\n");
@@ -636,7 +659,33 @@ int main(int argc, char **argv)
 	if (!use_stdout)
 		openlog("tayga", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
-	/* Change user */
+    /* Open the data directory */
+    gcfg->data_dir_fd = open(gcfg->data_dir, O_DIRECTORY);
+    if (gcfg->data_dir_fd < 0) {
+        if (errno != ENOENT) {
+            slog(LOG_CRIT, "Unable to open data directory %s: %s\n",
+                    gcfg->data_dir,
+                    strerror(errno));
+            exit(1);
+        }
+        slog(LOG_INFO, "Data directory %s does not exist, creating\n",
+                gcfg->data_dir);
+        if (mkdir(gcfg->data_dir, 0755) < 0) {
+			slog(LOG_CRIT, "Error: unable to create %s, aborting: "
+					"%s\n", gcfg->data_dir,
+					strerror(errno));
+			exit(1);
+        }
+        gcfg->data_dir_fd = open(gcfg->data_dir, O_DIRECTORY);
+        if (gcfg->data_dir_fd < 0) {
+			slog(LOG_CRIT, "Error: unable to open %s, aborting: "
+					"%s\n", gcfg->data_dir,
+					strerror(errno));
+			exit(1);
+        }
+    }
+
+	/* Resolve user */
 	if (user) {
 		pw = getpwnam(user);
 		if (!pw) {
@@ -645,7 +694,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* Change group */
+	/* Resolve group */
 	if (group) {
 		gr = getgrnam(group);
 		if (!gr) {
@@ -656,7 +705,14 @@ int main(int argc, char **argv)
 	}
 
 	/* Chroot */
-	if (!gcfg->data_dir[0]) {
+	if (do_chroot && (!pw || pw->pw_uid == 0)) {
+		slog(LOG_CRIT, "Error: chroot is ineffective without also "
+				"specifying the -u option to switch to an "
+				"unprivileged user\n");
+		exit(1);
+	}
+
+	if (gcfg->data_dir_fd < 0) {
 		if (do_chroot) {
 			slog(LOG_CRIT, "Error: cannot chroot when no data-dir "
 					"is specified in %s\n", conffile);
@@ -667,36 +723,15 @@ int main(int argc, char **argv)
 					strerror(errno));
 			exit(1);
 		}
-	} else if (chdir(gcfg->data_dir) < 0) {
-		if (user || errno != ENOENT) {
-			slog(LOG_CRIT, "Error: unable to chdir to %s, "
-					"aborting: %s\n", gcfg->data_dir,
-					strerror(errno));
-			exit(1);
-		}
-		if (mkdir(gcfg->data_dir, 0777) < 0) {
-			slog(LOG_CRIT, "Error: unable to create %s, aborting: "
-					"%s\n", gcfg->data_dir,
-					strerror(errno));
-			exit(1);
-		}
-		if (chdir(gcfg->data_dir) < 0) {
-			slog(LOG_CRIT, "Error: created %s but unable to chdir "
-					"to it!?? (%s)\n", gcfg->data_dir,
-					strerror(errno));
-			exit(1);
-		}
-	}
-
-	if (do_chroot && (!pw || pw->pw_uid == 0)) {
-		slog(LOG_CRIT, "Error: chroot is ineffective without also "
-				"specifying the -u option to switch to an "
-				"unprivileged user\n");
-		exit(1);
+	} else if (fchdir(gcfg->data_dir_fd) < 0) {
+        slog(LOG_CRIT, "Error: unable to chdir to %s, "
+                "aborting: %s\n", gcfg->data_dir,
+                strerror(errno));
+        exit(1);
 	}
 
 	if (pidfile) {
-		pidfd = open(pidfile, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		pidfd = open(pidfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (pidfd < 0) {
 			slog(LOG_CRIT, "Error, unable to open %s for "
 					"writing: %s\n", pidfile,

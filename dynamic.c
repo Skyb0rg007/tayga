@@ -234,6 +234,7 @@ static void load_map(struct dynamic_pool *pool, const struct in6_addr *addr6,
 
 void load_dynamic(struct dynamic_pool *pool)
 {
+    int fd;
 	FILE *in;
 	char line[512];
 	char *s4, *s6, *stime, *end, *tokptr;
@@ -244,14 +245,20 @@ void load_dynamic(struct dynamic_pool *pool)
 	struct map_dynamic *d;
 	int count = 0;
 
-	in = fopen(MAP_FILE, "r");
-	if (!in) {
+    fd = openat(gcfg->data_dir_fd, MAP_FILE, O_RDONLY);
+	if (fd < 0) {
 		if (errno != ENOENT)
 			slog(LOG_ERR, "Unable to open %s/%s, ignoring: %s\n",
 					gcfg->data_dir, MAP_FILE,
 					strerror(errno));
 		return;
 	}
+	in = fdopen(fd, "r");
+	if (!in) {
+        slog(LOG_ERR, "Call to fdopen() failed, ignoring: %s\n",
+                strerror(errno));
+        return;
+    }
 	while (fgets(line, sizeof(line), in)) {
 		if (strlen(line) + 1 == sizeof(line)) {
 			slog(LOG_ERR, "Ignoring oversized line in %s/%s\n",

@@ -490,6 +490,9 @@ int config_init(void)
 		return ERROR_REJECT;
 	}
 	memset(gcfg, 0, sizeof(struct config));
+    gcfg->urandom_fd = -1;
+    gcfg->tun_fd = -1;
+    gcfg->data_dir_fd = -1;
 	gcfg->recv_buf_size = 65536 + sizeof(struct tun_pi);
 	INIT_LIST_HEAD(&gcfg->map4_list);
 	INIT_LIST_HEAD(&gcfg->map6_list);
