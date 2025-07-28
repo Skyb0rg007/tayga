@@ -42,6 +42,9 @@ time_t now;
 
 static int signalfds[2];
 static int use_stdout;
+#ifdef __FreeBSD__
+static cap_channel_t *cap_syslog_chan = NULL;
+#endif
 
 void slog(int priority, const char *format, ...)
 {
@@ -51,6 +54,11 @@ void slog(int priority, const char *format, ...)
 	if (use_stdout)
 		vprintf(format, ap);
 	else if (priority != LOG_DEBUG)
+#ifdef __FreeBSD__
+        if (cap_syslog_chan)
+            cap_vsyslog(cap_syslog_chan, priority, format, ap);
+        else
+#endif
 		vsyslog(priority, format, ap);
 	va_end(ap);
 }
@@ -310,7 +318,45 @@ static void tun_setup(int do_mktun, int do_rmtun)
 
 static void drop_capabilities(void)
 {
-    // FreeBSD drop_capabilities() not implemented
+    cap_channel_t *cap_chan = cap_init();
+    cap_rights_t setrights;
+
+    if (cap_chan == NULL) {
+        slog(LOG_CRIT, "Unable to contact Casper, aborting\n");
+        exit(1);
+    }
+
+    cap_syslog_chan = cap_service_open(cap_chan, "system.syslog");
+    if (cap_syslog_chan == NULL) {
+        slog(LOG_CRIT, "Unable to open system.syslog service, aborting\n");
+        exit(1);
+    }
+
+    cap_close(cap_chan);
+
+    if (cap_enter() < 0) {
+        slog(LOG_CRIT, "Unable to enter capsicum sandbox, aborting: %s\n",
+                strerror(errno));
+        exit(1);
+    }
+
+    /* Limit to read(), writev(), poll() */
+    cap_rights_init(&setrights, CAP_READ, CAP_WRITE, CAP_EVENT);
+    if (cap_rights_limit(gcfg->tun_fd, &setrights) < 0 && errno != ENOSYS) {
+        slog(LOG_CRIT, "Unable to limit tun file descriptor rights"
+                "- cap_rights_limit() failed: %s\n",
+                strerror(errno));
+        exit(1);
+    }
+
+    /* Limit to read() */
+    cap_rights_init(&setrights, CAP_READ);
+    if (cap_rights_limit(gcfg->tun_fd, &setrights) < 0 && errno != ENOSYS) {
+        slog(LOG_CRIT, "Unable to limit /dev/urandom file descriptor rights"
+                "- cap_rights_limit() failed: %s\n",
+                strerror(errno));
+        exit(1);
+    }
 }
 #endif
 
