@@ -228,7 +228,7 @@ static void host_send_icmp4(uint8_t tos, struct in_addr *src,
 	header.ip4.ident = 0;
 	header.ip4.flags_offset = 0;
 	header.ip4.ttl = DEFAULT_TTL;
-	header.ip4.proto = 1;
+	header.ip4.proto = IPPROTO_ICMP;
 	header.ip4.cksum = 0;
 	header.ip4.src = *src;
 	header.ip4.dest = *dest;
@@ -254,7 +254,7 @@ static void host_send_icmp4_error(uint8_t type, uint8_t code, uint32_t word,
 
 	/* Don't send ICMP errors in response to ICMP messages other than
 	   echo request */
-	if (orig->data_proto == 1 && orig->icmp->type != 8)
+	if (orig->data_proto == IPPROTO_ICMP && orig->icmp->type != 8)
 		return;
 
 	orig_len = orig->header_len + orig->data_len;
@@ -292,7 +292,7 @@ static void xlate_header_4to6(struct pkt *p, struct ip6 *ip6,
 {
 	ip6->ver_tc_fl = htonl((0x6 << 28) | (p->ip4->tos << 20));
 	ip6->payload_length = htons(payload_length);
-	ip6->next_header = p->data_proto == 1 ? 58 : p->data_proto;
+	ip6->next_header = p->data_proto == IPPROTO_ICMP ? IPPROTO_ICMPV6 : p->data_proto;
 	ip6->hop_limit = p->ip4->ttl;
 }
 
@@ -307,9 +307,9 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
 
 	switch (p->data_proto) {
 	/* ICMPv4 */
-	case 1:
+	case IPPROTO_ICMP:
 		cksum = ip6_checksum(ip6, htons(p->ip4->length) -
-						p->header_len, 58);
+						p->header_len, IPPROTO_ICMPV6);
 		cksum = ones_add(p->icmp->cksum, cksum);
 		if (p->icmp->type == 8) {
 			p->icmp->type = 128;
@@ -320,7 +320,7 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
 		}
 		return ERROR_NONE;
 	/* UDP */
-	case 17:
+	case IPPROTO_UDP:
 		if (p->data_len < 8) {
 			if (!em) log_pkt4(LOG_OPT_DROP,p,"Insufficient payload length for UDP Header");
 			return ERROR_DROP;
@@ -340,13 +340,13 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
 			case UDP_CKSUM_CALC:
 				/* Calculate a real UDP checksum, now */
 				*tck = ones_add(ip_checksum(p->data,p->data_len), /* Body */
-								ip6_checksum(ip6,p->data_len,17));/* IP6 header */
+								ip6_checksum(ip6,p->data_len,IPPROTO_UDP));/* IP6 header */
 				return ERROR_NONE;
 			}
 		}
 		break;
 	/* TCP */
-	case 6:
+	case IPPROTO_TCP:
 		if (p->data_len < 20) {
 			if (!em) log_pkt4(LOG_OPT_DROP,p,"Insufficient payload length for TCP Header");
 			return ERROR_DROP;
@@ -443,7 +443,7 @@ static void xlate_4to6_data(struct pkt *p)
 		header.ip6_frag.reserved = 0;
 		header.ip6_frag.ident = htonl(ntohs(p->ip4->ident));
 
-		header.ip6.next_header = 44;
+		header.ip6.next_header = IPPROTO_FRAGMENT;
 
 		iov[0].iov_base = &header;
 		iov[0].iov_len = sizeof(header);
@@ -509,7 +509,7 @@ static int parse_ip4(struct pkt *p)
 	p->data_len -= p->header_len;
 	p->data_proto = p->ip4->proto;
 
-	if (p->data_proto == 1) { /* ICMPv4 */
+	if (p->data_proto == IPPROTO_ICMP) { /* ICMPv4 */
 		if (p->ip4->flags_offset & htons(IP4_F_MASK | IP4_F_MF)) {
 			log_pkt4(LOG_OPT_DROP,p,"ICMP Fragmented");
 			return ERROR_DROP;
@@ -519,11 +519,11 @@ static int parse_ip4(struct pkt *p)
 			return ERROR_DROP;
 		}
 		p->icmp = (struct icmp *)(p->data);
-	} else if(p->data_proto == 0 ||  /* IPv6 Hop By Hop */
-		      p->data_proto == 43 || /* IPv6 Routing Header */
-		      p->data_proto == 44 || /* IPv6 Fragment Header */
-		      p->data_proto == 58 || /* IPv6 ICMPv6 */
-			  p->data_proto == 60) { /* IPv6 Destination Options Header */
+	} else if(p->data_proto == IPPROTO_HOPOPTS  || /* IPv6 Hop By Hop */
+		      p->data_proto == IPPROTO_ROUTING  || /* IPv6 Routing Header */
+		      p->data_proto == IPPROTO_FRAGMENT || /* IPv6 Fragment Header */
+		      p->data_proto == IPPROTO_ICMPV6   || /* IPv6 ICMPv6 */
+			  p->data_proto == IPPROTO_DSTOPTS) {  /* IPv6 Destination Options Header */
 		log_pkt4(LOG_OPT_DROP,p,"IPv4 Packet with IPv6-Only Proto");
 		return ERROR_DROP;
 	} else {
@@ -587,7 +587,7 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 		return;
 	}
 
-	if (p_em.data_proto == 1 && p_em.icmp->type != 8) {
+	if (p_em.data_proto == IPPROTO_ICMP && p_em.icmp->type != 8) {
 		log_pkt4(LOG_OPT_DROP,p,"ICMP Error of ICMP Error");
 		return;
 	}
@@ -719,7 +719,7 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 
 	header.icmp.cksum = 0;
 	header.icmp.cksum = ones_add(ip6_checksum(&header.ip6,
-					ntohs(header.ip6.payload_length), 58),
+					ntohs(header.ip6.payload_length), IPPROTO_ICMPV6),
 			ones_add(ip_checksum(&header.icmp,
 						sizeof(header.icmp) +
 						sizeof(header.ip6_em)),
@@ -754,7 +754,7 @@ void handle_ip4(struct pkt *p)
 
 	/* Packet for ourselves*/
 	if (p->ip4->dest.s_addr == gcfg.local_addr4.s_addr) {
-		if (p->data_proto == 1)
+		if (p->data_proto == IPPROTO_ICMP)
 			host_handle_icmp4(p);
 		else {
 			log_pkt4(LOG_OPT_SELF | LOG_OPT_REJECT,p,"Self-Assigned Packet w/ Invalid Proto");
@@ -767,7 +767,7 @@ void handle_ip4(struct pkt *p)
 			host_send_icmp4_error(11, 0, 0, p);
 			return;
 		}
-		if (p->data_proto != 1 || p->icmp->type == 8 ||
+		if (p->data_proto != IPPROTO_ICMP || p->icmp->type == 8 ||
 				p->icmp->type == 0)
 			xlate_4to6_data(p);
 		else
@@ -785,7 +785,7 @@ static void host_send_icmp6(uint8_t tc, struct in6_addr *src,
 	TUN_SET_PROTO(&header.pi,  ETH_P_IPV6);
 	header.ip6.ver_tc_fl = htonl((0x6 << 28) | (tc << 20));
 	header.ip6.payload_length = htons(sizeof(header.icmp) + data_len);
-	header.ip6.next_header = 58;
+	header.ip6.next_header = IPPROTO_ICMPV6;
 	header.ip6.hop_limit = DEFAULT_TTL;
 	header.ip6.src = *src;
 	header.ip6.dest = *dest;
@@ -795,7 +795,7 @@ static void host_send_icmp6(uint8_t tc, struct in6_addr *src,
 			ip_checksum(&header.icmp, sizeof(header.icmp)));
 	header.icmp.cksum = ones_add(header.icmp.cksum,
 			ip6_checksum(&header.ip6,
-					data_len + sizeof(header.icmp), 58));
+					data_len + sizeof(header.icmp), IPPROTO_ICMPV6));
 	iov[0].iov_base = &header;
 	iov[0].iov_len = sizeof(header);
 	iov[1].iov_base = data;
@@ -813,7 +813,7 @@ static void host_send_icmp6_error(uint8_t type, uint8_t code, uint32_t word,
 
 	/* Don't send ICMP errors in response to ICMP messages other than
 	   echo request */
-	if (orig->data_proto == 58 && orig->icmp->type != 128)
+	if (orig->data_proto == IPPROTO_ICMPV6 && orig->icmp->type != 128)
 		return;
 
 	orig_len = sizeof(struct ip6) + orig->header_len + orig->data_len;
@@ -880,7 +880,7 @@ static void xlate_header_6to4(struct pkt *p, struct ip4 *ip4,
 		ip4->flags_offset = htons(IP4_F_DF);
 	}
 	ip4->ttl = p->ip6->hop_limit;
-	ip4->proto = p->data_proto == 58 ? 1 : p->data_proto;
+	ip4->proto = p->data_proto == IPPROTO_ICMPV6 ? IPPROTO_ICMP : p->data_proto;
 	ip4->cksum = 0;
 }
 
@@ -895,9 +895,9 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 
 	switch (p->data_proto) {
 	/* ICMPv6 */
-	case 58:
+	case IPPROTO_ICMPV6:
 		cksum = ~ip6_checksum(p->ip6, htons(p->ip6->payload_length) -
-							p->header_len, 58);
+							p->header_len, IPPROTO_ICMPV6);
 		cksum = ones_add(p->icmp->cksum, cksum);
 		if (p->icmp->type == 128) {
 			p->icmp->type = 8;
@@ -908,7 +908,7 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 		}
 		return ERROR_NONE;
 	/* UDP */
-	case 17:
+	case IPPROTO_UDP:
 		if (p->data_len < 8) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Insufficient UDP Header Length");
 			return ERROR_DROP;
@@ -934,7 +934,7 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 		}
 		break;
 	/* TCP */
-	case 6:
+	case IPPROTO_TCP:
 		if (p->data_len < 20) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Insufficient TCP Header Length");
 			return ERROR_DROP;
@@ -1032,8 +1032,8 @@ static int parse_ip6(struct pkt *p,int em)
 	if (p->data_len > ntohs(p->ip6->payload_length))
 		p->data_len = ntohs(p->ip6->payload_length);
 
-	while (p->data_proto == 0 || p->data_proto == 43 ||
-			p->data_proto == 60) {
+	while (p->data_proto == IPPROTO_IP || p->data_proto == IPPROTO_ROUTING ||
+			p->data_proto == IPPROTO_DSTOPTS) {
 		if (p->data_len < 2) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Extension Header Invalid Length");
 			return ERROR_DROP;
@@ -1046,7 +1046,7 @@ static int parse_ip6(struct pkt *p,int em)
 		/* If it's a routing header, extract segments left
 		 * We will drop the packet, but need to finish parsing it first
 		 */
-		if(p->data_proto == 43) seg_left = p->data[3];
+		if(p->data_proto == IPPROTO_ROUTING) seg_left = p->data[3];
 		if(!seg_left) seg_ptr += hdr_len;
 
 		/* Extract next header from extension header */
@@ -1056,7 +1056,7 @@ static int parse_ip6(struct pkt *p,int em)
 		p->header_len += hdr_len;
 	}
 
-	if (p->data_proto == 44) {
+	if (p->data_proto == IPPROTO_FRAGMENT) {
 		if (p->ip6_frag || p->data_len < sizeof(struct ip6_frag)) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragment Header Invalid Length");
 			return ERROR_DROP;
@@ -1080,7 +1080,7 @@ static int parse_ip6(struct pkt *p,int em)
 		}
 	}
 
-	if (p->data_proto == 58) {
+	if (p->data_proto == IPPROTO_ICMPV6) {
 		if (p->ip6_frag && (p->ip6_frag->offset_flags &
 					htons(IP6_F_MASK | IP6_F_MF))) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragmented ICMP");
@@ -1091,7 +1091,7 @@ static int parse_ip6(struct pkt *p,int em)
 			return ERROR_DROP;
 		}
 		p->icmp = (struct icmp *)(p->data);
-	} else if(p->data_proto == 1) { /* ICMPv4, which is not valid to translate */
+	} else if(p->data_proto == IPPROTO_ICMP) { /* ICMPv4, which is not valid to translate */
 		if(!em) log_pkt6(LOG_OPT_DROP,p,"IPv6 with IPv4-only Proto");
 		return ERROR_DROP;
 	}
@@ -1137,7 +1137,7 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 		return;
 	}
 
-	if (p_em.data_proto == 58 && p_em.icmp->type != 128) {
+	if (p_em.data_proto == IPPROTO_ICMPV6 && p_em.icmp->type != 128) {
 		log_pkt6(LOG_OPT_DROP,p,"ICMP Error with ICMP Error");
 		return;
 	}
@@ -1289,13 +1289,13 @@ void handle_ip6(struct pkt *p)
 	}
 
 	if (p->icmp && ones_add(ip_checksum(p->data, p->data_len),
-				ip6_checksum(p->ip6, p->data_len, 58))) {
+				ip6_checksum(p->ip6, p->data_len, IPPROTO_ICMPV6))) {
 		log_pkt6(LOG_OPT_DROP,p,"ICMP Invalid Checksum");
 		return;
 	}
 
 	if (IN6_ARE_ADDR_EQUAL(&p->ip6->dest, &gcfg.local_addr6)) {
-		if (p->data_proto == 58)
+		if (p->data_proto == IPPROTO_ICMPV6)
 			host_handle_icmp6(p);
 		else {
 			log_pkt6(LOG_OPT_SELF | LOG_OPT_REJECT,p,"Unknown protocol to self");
@@ -1308,7 +1308,7 @@ void handle_ip6(struct pkt *p)
 			return;
 		}
 
-		if (p->data_proto != 58 || p->icmp->type == 128 ||
+		if (p->data_proto != IPPROTO_ICMPV6 || p->icmp->type == 128 ||
 				p->icmp->type == 129)
 			xlate_6to4_data(p);
 		else
