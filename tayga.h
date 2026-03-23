@@ -29,6 +29,10 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/icmp6.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -55,6 +59,21 @@
 #error "Could not find headers for platform"
 #endif
 #include "list.h"
+
+#ifndef ICMP_PARAMPROB_ERRATPTR
+#define ICMP_PARAMPROB_ERRATPTR 0
+#endif
+#ifndef ICMP_PARAMPROB_LENGTH
+#define ICMP_PARAMPROB_LENGTH 2
+#endif
+
+static_assert(sizeof(struct tcphdr) == 20);
+static_assert(offsetof(struct tcphdr, th_sum) == 16);
+static_assert(sizeof(((struct tcphdr *)0)->th_sum) == 2);
+
+static_assert(sizeof(struct udphdr) == 8);
+static_assert(offsetof(struct udphdr, uh_sum) == 6);
+static_assert(sizeof(((struct udphdr *)0)->uh_sum) == 2);
 
 #ifdef COVERAGE_TESTING
 //for coverage testing
@@ -164,15 +183,15 @@ static_assert(IP6F_MORE_FRAG == 0x0100, "IP6F_MORE_FRAG must be defined");
 static_assert(IP6F_OFF_MASK == 0xf8ff, "IP6F_OFF_MASK must be defined");
 #endif
 
-struct icmp {
+struct tayga_icmp {
 	uint8_t type;
 	uint8_t code;
 	uint16_t cksum;
 	uint32_t word;
 };
 
-static_assert(alignof(struct icmp) <= 4,"Struct ICMP must be 4-byte aligned");
-static_assert(sizeof(struct icmp) == 8,"Struct ICMP must be 8 bytes long");
+static_assert(alignof(struct tayga_icmp) <= 4,"Struct ICMP must be 4-byte aligned");
+static_assert(sizeof(struct tayga_icmp) >= 8,"Struct ICMP must be 8 bytes long");
 
 #define	WKPF	(htonl(0x0064ff9b))
 
@@ -198,7 +217,7 @@ struct pkt {
 	struct ip4 *ip4;
 	struct ip6 *ip6;
 	struct ip6_frag *ip6_frag;
-	struct icmp *icmp;
+	struct tayga_icmp *icmp;
 	uint8_t data_proto;
 	uint8_t *data;
 	uint32_t data_len;

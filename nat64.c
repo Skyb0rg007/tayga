@@ -28,13 +28,13 @@ struct ip6_data {
 struct ip6_icmp {
     struct tun_pi pi;
     struct ip6 ip6;
-    struct icmp icmp;
+    struct tayga_icmp icmp;
 };
 
 struct ip6_error {
     struct tun_pi pi;
     struct ip6 ip6;
-    struct icmp icmp;
+    struct tayga_icmp icmp;
     struct ip6 ip6_em;
 };
 
@@ -46,13 +46,13 @@ struct ip4_data {
 struct ip4_icmp {
     struct tun_pi pi;
     struct ip4 ip4;
-    struct icmp icmp;
+    struct tayga_icmp icmp;
 };
 
 struct ip4_error {
     struct tun_pi pi;
     struct ip4 ip4;
-    struct icmp icmp;
+    struct tayga_icmp icmp;
     struct ip4 ip4_em;
 };
 
@@ -214,14 +214,14 @@ static uint16_t convert_cksum(struct ip6 *ip6, struct ip4 *ip4)
 }
 
 static void host_send_icmp4(uint8_t tos, struct in_addr *src,
-		struct in_addr *dest, struct icmp *icmp,
+		struct in_addr *dest, struct tayga_icmp *icmp,
 		uint8_t *data, uint32_t data_len)
 {
 	struct ip4_icmp header;
 	struct iovec iov[2];
 
-	TUN_SET_PROTO(&header.pi,  ETH_P_IP);
-	header.ip4.ver_ihl = 0x45;
+	TUN_SET_PROTO(&header.pi, ETH_P_IP);
+	header.ip4.ver_ihl = 0x40 | (sizeof(header.ip4) >> 2);
 	header.ip4.tos = tos;
 	header.ip4.length = htons(sizeof(header.ip4) + sizeof(header.icmp) +
 				data_len);
@@ -249,7 +249,7 @@ static void host_send_icmp4(uint8_t tos, struct in_addr *src,
 static void host_send_icmp4_error(uint8_t type, uint8_t code, uint32_t word,
 		struct pkt *orig)
 {
-	struct icmp icmp;
+	struct tayga_icmp icmp;
 	uint32_t orig_len;
 
 	/* Don't send ICMP errors in response to ICMP messages other than
@@ -258,8 +258,8 @@ static void host_send_icmp4_error(uint8_t type, uint8_t code, uint32_t word,
 		return;
 
 	orig_len = orig->header_len + orig->data_len;
-	if (orig_len > IP_MSS - sizeof(struct ip4) - sizeof(struct icmp))
-		orig_len = IP_MSS - sizeof(struct ip4) - sizeof(struct icmp);
+	if (orig_len > IP_MSS - sizeof(struct ip4) - sizeof(struct tayga_icmp))
+		orig_len = IP_MSS - sizeof(struct ip4) - sizeof(struct tayga_icmp);
 	icmp.type = type;
 	icmp.code = code;
 	icmp.word = htonl(word);
@@ -270,12 +270,12 @@ static void host_send_icmp4_error(uint8_t type, uint8_t code, uint32_t word,
 static void host_handle_icmp4(struct pkt *p)
 {
 	char temp[32];
-	p->data += sizeof(struct icmp);
-	p->data_len -= sizeof(struct icmp);
+	p->data += sizeof(struct tayga_icmp);
+	p->data_len -= sizeof(struct tayga_icmp);
 
 	switch (p->icmp->type) {
-	case 8:
-		p->icmp->type = 0;
+	case ICMP_ECHO:
+		p->icmp->type = ICMP_ECHOREPLY;
 		log_pkt4(LOG_OPT_SELF,p,"Echo Request");
 		host_send_icmp4(p->ip4->tos, &p->ip4->dest, &p->ip4->src,
 				p->icmp, p->data, p->data_len);
@@ -302,7 +302,7 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
 	uint16_t cksum;
 
 	/* Do not adjust fragment packets */
-	if (p->ip4->flags_offset & htons(IP4_F_MASK))
+	if (p->ip4->flags_offset & htons(IP_OFFMASK))
 		return ERROR_NONE;
 
 	switch (p->data_proto) {
@@ -311,21 +311,21 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
 		cksum = ip6_checksum(ip6, htons(p->ip4->length) -
 						p->header_len, IPPROTO_ICMPV6);
 		cksum = ones_add(p->icmp->cksum, cksum);
-		if (p->icmp->type == 8) {
-			p->icmp->type = 128;
-			p->icmp->cksum = ones_add(cksum, (uint16_t)~((128 - 8)<<BIG_LITTLE(8,0)));
+		if (p->icmp->type == ICMP_ECHO) {
+			p->icmp->type = ICMP6_ECHO_REQUEST;
+			p->icmp->cksum = ones_add(cksum, (uint16_t)~((ICMP6_ECHO_REQUEST - ICMP_ECHO)<<BIG_LITTLE(8,0)));
 		} else {
-			p->icmp->type = 129;
-			p->icmp->cksum = ones_add(cksum, (uint16_t)~((129 - 0)<<BIG_LITTLE(8,0)));
+			p->icmp->type = ICMP6_ECHO_REPLY;
+			p->icmp->cksum = ones_add(cksum, (uint16_t)~((ICMP6_ECHO_REPLY - ICMP_ECHOREPLY)<<BIG_LITTLE(8,0)));
 		}
 		return ERROR_NONE;
 	/* UDP */
 	case IPPROTO_UDP:
-		if (p->data_len < 8) {
+		if (p->data_len < sizeof(struct udphdr)) {
 			if (!em) log_pkt4(LOG_OPT_DROP,p,"Insufficient payload length for UDP Header");
 			return ERROR_DROP;
 		}
-		tck = (uint16_t *)(p->data + 6);
+        tck = &((struct udphdr *)p->data)->uh_sum;
 		if (!*tck) {
 			/* UDP packet has no checksum, how do we deal? */
 			switch(gcfg.udp_cksum_mode) {
@@ -347,11 +347,11 @@ static int xlate_payload_4to6(struct pkt *p, struct ip6 *ip6, int em)
 		break;
 	/* TCP */
 	case IPPROTO_TCP:
-		if (p->data_len < 20) {
+		if (p->data_len < sizeof(struct tcphdr)) {
 			if (!em) log_pkt4(LOG_OPT_DROP,p,"Insufficient payload length for TCP Header");
 			return ERROR_DROP;
 		}
-		tck = (uint16_t *)(p->data + 16);
+        tck = &((struct tcphdr *)p->data)->th_sum;
 		break;
 	/* Any other protocol */
 	default:
@@ -379,7 +379,7 @@ static void xlate_4to6_data(struct pkt *p)
 	ret = map_ip4_to_ip6(&header.ip6.dest, &p->ip4->dest);
 	if (ret == ERROR_REJECT) {
 		log_pkt4(LOG_OPT_REJECT,p,"Unable to map destination address");
-		host_send_icmp4_error(3, 1, 0, p);
+		host_send_icmp4_error(ICMP_UNREACH, ICMP_UNREACH_HOST, 0, p);
 
 		return;
 	}
@@ -391,7 +391,7 @@ static void xlate_4to6_data(struct pkt *p)
 	ret = map_ip4_to_ip6(&header.ip6.src, &p->ip4->src);
 	if (ret == ERROR_REJECT) {
 		log_pkt4(LOG_OPT_REJECT,p,"Unable to map source address");
-		host_send_icmp4_error(3, 10, 0, p);
+		host_send_icmp4_error(ICMP_UNREACH, ICMP_UNREACH_HOST_PROHIB, 0, p);
 		return;
 	}
 	else if(ret == ERROR_DROP) {
@@ -408,11 +408,12 @@ static void xlate_4to6_data(struct pkt *p)
 	   bytes of fragmented payload.  Translating this to IP6 requires
 	   40 bytes of IP6 header + 8 bytes of fragmentation header +
 	   1456 bytes of payload == 1504 bytes.) */
-	if ((off & (IP4_F_MASK | IP4_F_MF)) == 0) {
-		if (off & IP4_F_DF) {
+	if ((off & (IP_OFFMASK | IP_MF)) == 0) {
+		if (off & IP_DF) {
 			if (gcfg.mtu - MTU_ADJ < p->header_len + p->data_len) {
 				log_pkt4(LOG_OPT_ICMP,p,"Packet Too Big");
-				host_send_icmp4_error(3, 4, gcfg.mtu - MTU_ADJ, p);
+				host_send_icmp4_error(ICMP_UNREACH, ICMP_UNREACH_NEEDFRAG,
+                        gcfg.mtu - MTU_ADJ, p);
 				return;
 			}
 			no_frag_hdr = 1;
@@ -448,7 +449,7 @@ static void xlate_4to6_data(struct pkt *p)
 		iov[0].iov_base = &header;
 		iov[0].iov_len = sizeof(header);
 
-		off = (off & IP4_F_MASK) * 8;
+		off = (off & IP_OFFMASK) * 8;
 		frag_size = (frag_size - sizeof(header.ip6_frag)) & ~7;
 
 		while (p->data_len > 0) {
@@ -514,11 +515,11 @@ static int parse_ip4(struct pkt *p)
 			log_pkt4(LOG_OPT_DROP,p,"ICMP Fragmented");
 			return ERROR_DROP;
 		}
-		if (p->data_len < sizeof(struct icmp)) {
+		if (p->data_len < sizeof(struct tayga_icmp)) {
 			log_pkt4(LOG_OPT_DROP,p,"ICMP Header Length");
 			return ERROR_DROP;
 		}
-		p->icmp = (struct icmp *)(p->data);
+		p->icmp = (struct tayga_icmp *)(p->data);
 	} else if(p->data_proto == IPPROTO_HOPOPTS  || /* IPv6 Hop By Hop */
 		      p->data_proto == IPPROTO_ROUTING  || /* IPv6 Routing Header */
 		      p->data_proto == IPPROTO_FRAGMENT || /* IPv6 Fragment Header */
@@ -568,10 +569,12 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 	char temp[64];
 
 	memset(&p_em, 0, sizeof(p_em));
-	p_em.data = p->data + sizeof(struct icmp);
-	p_em.data_len = p->data_len - sizeof(struct icmp);
+	p_em.data = p->data + sizeof(struct tayga_icmp);
+	p_em.data_len = p->data_len - sizeof(struct tayga_icmp);
 
-	if (p->icmp->type == 3 || p->icmp->type == 11 || p->icmp->type == 12) {
+	if (p->icmp->type == ICMP_UNREACH ||
+            p->icmp->type == ICMP_TIMXCEED ||
+            p->icmp->type == ICMP_PARAMPROB) {
 		em_len = (ntohl(p->icmp->word) >> 14) & 0x3fc;
 		if (em_len) {
 			if (p_em.data_len < em_len) {
@@ -587,14 +590,13 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 		return;
 	}
 
-	if (p_em.data_proto == IPPROTO_ICMP && p_em.icmp->type != 8) {
+	if (p_em.data_proto == IPPROTO_ICMP && p_em.icmp->type != ICMP_ECHO) {
 		log_pkt4(LOG_OPT_DROP,p,"ICMP Error of ICMP Error");
 		return;
 	}
 
-	if (sizeof(struct ip6) * 2 + sizeof(struct icmp) + p_em.data_len > MTU_MIN)
-		p_em.data_len = MTU_MIN - sizeof(struct ip6) * 2 -
-						sizeof(struct icmp);
+	if (sizeof(struct ip6) * 2 + sizeof(struct tayga_icmp) + p_em.data_len > MTU_MIN)
+		p_em.data_len = MTU_MIN - sizeof(struct ip6) * 2 - sizeof(struct tayga_icmp);
 
 	if (map_ip4_to_ip6(&header.ip6_em.src, &p_em.ip4->src) ||
 			map_ip4_to_ip6(&header.ip6_em.dest,
@@ -607,37 +609,37 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 				ntohs(p_em.ip4->length) - p_em.header_len);
 
 	switch (p->icmp->type) {
-	case 3: /* Destination Unreachable */
-		header.icmp.type = 1; /* Destination Unreachable */
+	case ICMP_UNREACH: /* Destination Unreachable */
+		header.icmp.type = ICMP6_DST_UNREACH; /* Destination Unreachable */
 		header.icmp.word = 0;
 		switch (p->icmp->code) {
-		case 0: /* Network Unreachable */
+		case ICMP_UNREACH_NET: /* Network Unreachable */
 			dummy();
-		case 1: /* Host Unreachable */
+		case ICMP_UNREACH_HOST: /* Host Unreachable */
 			dummy();
-		case 5: /* Source Route Failed */
+		case ICMP_UNREACH_SRCFAIL: /* Source Route Failed */
 			dummy();
-		case 6:
+		case ICMP_UNREACH_NET_UNKNOWN:
 			dummy();
-		case 7:
+		case ICMP_UNREACH_HOST_UNKNOWN:
 			dummy();
-		case 8:
+		case ICMP_UNREACH_ISOLATED:
 			dummy();
-		case 11:
+		case ICMP_UNREACH_TOSNET:
 			dummy();
-		case 12:
-			header.icmp.code = 0; /* No route to destination */
+		case ICMP_UNREACH_TOSHOST:
+			header.icmp.code = ICMP6_DST_UNREACH_NOROUTE; /* No route to destination */
 			break;
-		case 2: /* Protocol Unreachable */
-			header.icmp.type = 4;
-			header.icmp.code = 1;
+		case ICMP_UNREACH_PROTOCOL: /* Protocol Unreachable */
+			header.icmp.type = ICMP6_PARAM_PROB;
+			header.icmp.code = ICMP6_PARAMPROB_NEXTHEADER;
 			header.icmp.word = htonl(6);
 			break;
-		case 3: /* Port Unreachable */
-			header.icmp.code = 4; /* Port Unreachable */
+		case ICMP_UNREACH_PORT: /* Port Unreachable */
+			header.icmp.code = ICMP6_DST_UNREACH_NOPORT; /* Port Unreachable */
 			break;
-		case 4: /* Fragmentation needed and DF set */
-			header.icmp.type = 2;
+		case ICMP_UNREACH_NEEDFRAG: /* Fragmentation needed and DF set */
+			header.icmp.type = ICMP6_PACKET_TOO_BIG;
 			header.icmp.code = 0;
 			mtu = ntohl(p->icmp->word) & 0xffff;
 			if (mtu < 68)
@@ -652,14 +654,14 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 			}
 			header.icmp.word = htonl(mtu);
 			break;
-		case 9:
+		case ICMP_UNREACH_NET_PROHIB:
 			dummy();
-		case 10:
+		case ICMP_UNREACH_HOST_PROHIB:
 			dummy();
-		case 13:
+		case ICMP_UNREACH_FILTER_PROHIB:
 			dummy();
-		case 15:
-			header.icmp.code = 1; /* Administratively prohibited */
+		case ICMP_UNREACH_PRECEDENCE_CUTOFF:
+			header.icmp.code = ICMP6_DST_UNREACH_ADMIN; /* Administratively prohibited */
 			break;
 		default:
 			sprintf(temp,"ICMP Unknown Dest Unreach Code %d",p->icmp->code);
@@ -667,13 +669,13 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 			return;
 		}
 		break;
-	case 11: /* Time Exceeded */
-		header.icmp.type = 3; /* Time Exceeded */
+	case ICMP_TIMXCEED: /* Time Exceeded */
+		header.icmp.type = ICMP6_TIME_EXCEEDED; /* Time Exceeded */
 		header.icmp.code = p->icmp->code;
 		header.icmp.word = 0;
 		break;
-	case 12: /* Parameter Problem */
-		if (p->icmp->code != 0 && p->icmp->code != 2) {
+	case ICMP_PARAMPROB: /* Parameter Problem */
+		if (p->icmp->code != ICMP_PARAMPROB_ERRATPTR && p->icmp->code != ICMP_PARAMPROB_LENGTH) {
 			log_pkt4(LOG_OPT_DROP,p,"Parameter Problem Invalid Code");
 			return;
 		}
@@ -687,8 +689,8 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 			log_pkt4(LOG_OPT_DROP,p,"Parameter Problem Not Translatable");
 			return;
 		}
-		header.icmp.type = 4;
-		header.icmp.code = 0;
+		header.icmp.type = ICMP6_PARAM_PROB;
+		header.icmp.code = ICMP6_PARAMPROB_HEADER;
 		header.icmp.word = htonl(new_ptr_tbl[old_ptr]);
 		break;
 	default:
@@ -758,17 +760,17 @@ void handle_ip4(struct pkt *p)
 			host_handle_icmp4(p);
 		else {
 			log_pkt4(LOG_OPT_SELF | LOG_OPT_REJECT,p,"Self-Assigned Packet w/ Invalid Proto");
-			host_send_icmp4_error(3, 2, 0, p);
+			host_send_icmp4_error(ICMP_UNREACH, ICMP_UNREACH_PROTOCOL, 0, p);
 		}
 	} else {
 		/* Time Exceeded*/
 		if (p->ip4->ttl == 1) {
 			log_pkt4(LOG_OPT_ICMP,p,"Time Exceeded");
-			host_send_icmp4_error(11, 0, 0, p);
+			host_send_icmp4_error(ICMP_TIMXCEED, ICMP_TIMXCEED_INTRANS, 0, p);
 			return;
 		}
-		if (p->data_proto != IPPROTO_ICMP || p->icmp->type == 8 ||
-				p->icmp->type == 0)
+		if (p->data_proto != IPPROTO_ICMP || p->icmp->type == ICMP_ECHO ||
+				p->icmp->type == ICMP_ECHOREPLY)
 			xlate_4to6_data(p);
 		else
 			xlate_4to6_icmp_error(p);
@@ -776,7 +778,7 @@ void handle_ip4(struct pkt *p)
 }
 
 static void host_send_icmp6(uint8_t tc, struct in6_addr *src,
-		struct in6_addr *dest, struct icmp *icmp,
+		struct in6_addr *dest, struct tayga_icmp *icmp,
 		uint8_t *data, uint32_t data_len)
 {
 	struct ip6_icmp header;
@@ -808,17 +810,17 @@ static void host_send_icmp6(uint8_t tc, struct in6_addr *src,
 static void host_send_icmp6_error(uint8_t type, uint8_t code, uint32_t word,
 				struct pkt *orig)
 {
-	struct icmp icmp;
+	struct tayga_icmp icmp;
 	uint32_t orig_len;
 
 	/* Don't send ICMP errors in response to ICMP messages other than
 	   echo request */
-	if (orig->data_proto == IPPROTO_ICMPV6 && orig->icmp->type != 128)
+	if (orig->data_proto == IPPROTO_ICMPV6 && orig->icmp->type != ICMP6_ECHO_REQUEST)
 		return;
 
 	orig_len = sizeof(struct ip6) + orig->header_len + orig->data_len;
-	if (orig_len > MTU_MIN - sizeof(struct ip6) - sizeof(struct icmp))
-		orig_len = MTU_MIN - sizeof(struct ip6) - sizeof(struct icmp);
+	if (orig_len > MTU_MIN - sizeof(struct ip6) - sizeof(struct tayga_icmp))
+		orig_len = MTU_MIN - sizeof(struct ip6) - sizeof(struct tayga_icmp);
 	icmp.type = type;
 	icmp.code = code;
 	icmp.word = htonl(word);
@@ -829,12 +831,12 @@ static void host_send_icmp6_error(uint8_t type, uint8_t code, uint32_t word,
 static void host_handle_icmp6(struct pkt *p)
 {
 	char temp[32];
-	p->data += sizeof(struct icmp);
-	p->data_len -= sizeof(struct icmp);
+	p->data += sizeof(struct tayga_icmp);
+	p->data_len -= sizeof(struct tayga_icmp);
 
 	switch (p->icmp->type) {
-	case 128:
-		p->icmp->type = 129;
+	case ICMP6_ECHO_REQUEST:
+		p->icmp->type = ICMP6_ECHO_REPLY;
 		log_pkt6(LOG_OPT_SELF,p,"Echo Request");
 		host_send_icmp6((ntohl(p->ip6->ver_tc_fl) >> 20) & 0xff,
 				&p->ip6->dest, &p->ip6->src,
@@ -899,12 +901,12 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 		cksum = ~ip6_checksum(p->ip6, htons(p->ip6->payload_length) -
 							p->header_len, IPPROTO_ICMPV6);
 		cksum = ones_add(p->icmp->cksum, cksum);
-		if (p->icmp->type == 128) {
-			p->icmp->type = 8;
-			p->icmp->cksum = ones_add(cksum, (128 - 8)<<BIG_LITTLE(8,0));
+		if (p->icmp->type == ICMP6_ECHO_REQUEST) {
+			p->icmp->type = ICMP_ECHO;
+			p->icmp->cksum = ones_add(cksum, (ICMP6_ECHO_REQUEST - ICMP_ECHO)<<BIG_LITTLE(8,0));
 		} else {
-			p->icmp->type = 0;
-			p->icmp->cksum = ones_add(cksum, (129 - 0)<<BIG_LITTLE(8,0));
+			p->icmp->type = ICMP_ECHOREPLY;
+			p->icmp->cksum = ones_add(cksum, (ICMP6_ECHO_REPLY - ICMP_ECHOREPLY)<<BIG_LITTLE(8,0));
 		}
 		return ERROR_NONE;
 	/* UDP */
@@ -913,7 +915,7 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Insufficient UDP Header Length");
 			return ERROR_DROP;
 		}
-		tck = (uint16_t *)(p->data + 6);
+        tck = &((struct udphdr *)p->data)->uh_sum;
 		if (!*tck) {
 			/* UDP packet has no checksum, how do we deal? */
 			switch(gcfg.udp_cksum_mode) {
@@ -935,11 +937,11 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 		break;
 	/* TCP */
 	case IPPROTO_TCP:
-		if (p->data_len < 20) {
+		if (p->data_len < sizeof(struct tcphdr)) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Insufficient TCP Header Length");
 			return ERROR_DROP;
 		}
-		tck = (uint16_t *)(p->data + 16);
+        tck = &((struct tcphdr *)p->data)->th_sum;
 		break;
 	/* Other */
 	default:
@@ -959,7 +961,7 @@ static void xlate_6to4_data(struct pkt *p)
 	ret = map_ip6_to_ip4(&header.ip4.dest, &p->ip6->dest, 0);
 	if (ret == ERROR_REJECT) {
 		log_pkt6(LOG_OPT_REJECT,p,"Failed to map dest addr");
-		host_send_icmp6_error(1, 0, 0, p);
+		host_send_icmp6_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE, 0, p);
 		return;
 	}
 	else if (ret == ERROR_DROP){
@@ -1086,11 +1088,11 @@ static int parse_ip6(struct pkt *p,int em)
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragmented ICMP");
 			return ERROR_DROP;
 		}
-		if (p->data_len < sizeof(struct icmp)) {
+		if (p->data_len < sizeof(struct tayga_icmp)) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"ICMP with insufficient header size");
 			return ERROR_DROP;
 		}
-		p->icmp = (struct icmp *)(p->data);
+		p->icmp = (struct tayga_icmp *)(p->data);
 	} else if(p->data_proto == IPPROTO_ICMP) { /* ICMPv4, which is not valid to translate */
 		if(!em) log_pkt6(LOG_OPT_DROP,p,"IPv6 with IPv4-only Proto");
 		return ERROR_DROP;
@@ -1102,7 +1104,7 @@ static int parse_ip6(struct pkt *p,int em)
 	if(seg_left) {
 		seg_ptr += 4;
 		if(!em) log_pkt6(LOG_OPT_REJECT,p,"Routing Header with Segments Left");
-		host_send_icmp6_error(4, 0, seg_ptr, p);
+		host_send_icmp6_error(ICMP6_PARAM_PROB, ICMP6_PARAMPROB_HEADER, seg_ptr, p);
 		return ERROR_DROP;
 	}
 
@@ -1118,10 +1120,10 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 	uint16_t em_len;
 
 	memset(&p_em, 0, sizeof(p_em));
-	p_em.data = p->data + sizeof(struct icmp);
-	p_em.data_len = p->data_len - sizeof(struct icmp);
+	p_em.data = p->data + sizeof(struct tayga_icmp);
+	p_em.data_len = p->data_len - sizeof(struct tayga_icmp);
 
-	if (p->icmp->type == 1 || p->icmp->type == 3) {
+	if (p->icmp->type == ICMP6_DST_UNREACH || p->icmp->type == ICMP_TIME_EXCEEDED) {
 		em_len = (ntohl(p->icmp->word) >> 21) & 0x7f8;
 		if (em_len) {
 			if (p_em.data_len < em_len) {
@@ -1137,40 +1139,40 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 		return;
 	}
 
-	if (p_em.data_proto == IPPROTO_ICMPV6 && p_em.icmp->type != 128) {
+	if (p_em.data_proto == IPPROTO_ICMPV6 && p_em.icmp->type != ICMP6_ECHO_REQUEST) {
 		log_pkt6(LOG_OPT_DROP,p,"ICMP Error with ICMP Error");
 		return;
 	}
 
-	if (sizeof(struct ip4) * 2 + sizeof(struct icmp) + p_em.data_len > IP_MSS)
+	if (sizeof(struct ip4) * 2 + sizeof(struct tayga_icmp) + p_em.data_len > IP_MSS)
 		p_em.data_len = IP_MSS - sizeof(struct ip4) * 2 -
-						sizeof(struct icmp);
+						sizeof(struct tayga_icmp);
 
 	switch (p->icmp->type) {
-	case 1: /* Destination Unreachable */
-		header.icmp.type = 3; /* Destination Unreachable */
+	case ICMP6_DST_UNREACH: /* Destination Unreachable */
+		header.icmp.type = ICMP_UNREACH; /* Destination Unreachable */
 		header.icmp.word = 0;
 		switch (p->icmp->code) {
-		case 0: /* No route to destination */
+		case ICMP6_DST_UNREACH_NOROUTE: /* No route to destination */
 		dummy();
-		case 2: /* Beyond scope of source address */
+		case ICMP6_DST_UNREACH_BEYONDSCOPE: /* Beyond scope of source address */
 		dummy();
-		case 3: /* Address Unreachable */
-			header.icmp.code = 1; /* Host Unreachable */
+		case ICMP6_DST_UNREACH_ADDR: /* Address Unreachable */
+			header.icmp.code = ICMP_UNREACH_HOST; /* Host Unreachable */
 			break;
-		case 1: /* Administratively prohibited */
-			header.icmp.code = 10; /* Administratively prohibited */
+		case ICMP6_DST_UNREACH_ADMIN: /* Administratively prohibited */
+			header.icmp.code = ICMP_HOST_ANO; /* Administratively prohibited */
 			break;
-		case 4: /* Port Unreachable */
-			header.icmp.code = 3; /* Port Unreachable */
+		case ICMP6_DST_UNREACH_NOPORT: /* Port Unreachable */
+			header.icmp.code = ICMP_UNREACH_PORT; /* Port Unreachable */
 			break;
 		default:
 			return;
 		}
 		break;
-	case 2: /* Packet Too Big */
-		header.icmp.type = 3; /* Destination Unreachable */
-		header.icmp.code = 4; /* Fragmentation needed */
+	case ICMP6_PACKET_TOO_BIG: /* Packet Too Big */
+		header.icmp.type = ICMP_UNREACH; /* Destination Unreachable */
+		header.icmp.code = ICMP_UNREACH_NEEDFRAG; /* Fragmentation needed */
 		mtu = ntohl(p->icmp->word);
 		if (mtu < 68) {
 			log_pkt6(LOG_OPT_DROP,p,"No MTU in Packet Too Big");
@@ -1181,14 +1183,14 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 		mtu -= MTU_ADJ;
 		header.icmp.word = htonl(mtu);
 		break;
-	case 3: /* Time Exceeded */
-		header.icmp.type = 11; /* Time Exceeded */
+	case ICMP6_TIME_EXCEEDED: /* Time Exceeded */
+		header.icmp.type = ICMP_TIME_EXCEEDED; /* Time Exceeded */
 		header.icmp.code = p->icmp->code;
 		header.icmp.word = 0;
 		break;
-	case 4: /* Parameter Problem */
+	case ICMP6_PARAM_PROB: /* Parameter Problem */
 		/* Erroneous Header Field Encountered */
-		if (p->icmp->code == 0) {
+		if (p->icmp->code == ICMP6_PARAMPROB_HEADER) {
 			static const int32_t new_ptr_tbl[8] = {0,1,-1,-1,2,2,9,8};
 			int32_t old_ptr = ntohl(p->icmp->word);
 			int32_t new_ptr;
@@ -1206,14 +1208,14 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 				log_pkt6(LOG_OPT_DROP,p,"Parameter Problem Not Translatable");
 				return;
 			}
-			header.icmp.type = 12;
-			header.icmp.code = 0;
+			header.icmp.type = ICMP_PARAMETERPROB;
+			header.icmp.code = ICMP_PARAMPROB_ERRATPTR;
 			header.icmp.word = (htonl(new_ptr << 24));
 			break;
 		/* Unrecognized Next Header Type*/
-		} else if (p->icmp->code == 1) {
-			header.icmp.type = 3; /* Destination Unreachable */
-			header.icmp.code = 2; /* Protocol Unreachable */
+		} else if (p->icmp->code == ICMP6_PARAMPROB_NEXTHEADER) {
+			header.icmp.type = ICMP_UNREACH; /* Destination Unreachable */
+			header.icmp.code = ICMP_UNREACH_PROTOCOL; /* Protocol Unreachable */
 			header.icmp.word = 0;
 			break;
 		}
@@ -1299,17 +1301,17 @@ void handle_ip6(struct pkt *p)
 			host_handle_icmp6(p);
 		else {
 			log_pkt6(LOG_OPT_SELF | LOG_OPT_REJECT,p,"Unknown protocol to self");
-			host_send_icmp6_error(4, 1, 6, p);
+			host_send_icmp6_error(ICMP6_PARAM_PROB, ICMP6_PARAMPROB_NEXTHEADER, 6, p);
 		}
 	} else {
 		if (p->ip6->hop_limit == 1) {
 			log_pkt6(LOG_OPT_ICMP,p,"Time Exceeded");
-			host_send_icmp6_error(3, 0, 0, p);
+			host_send_icmp6_error(ICMP6_TIME_EXCEEDED, ICMP6_TIME_EXCEED_TRANSIT, 0, p);
 			return;
 		}
 
-		if (p->data_proto != IPPROTO_ICMPV6 || p->icmp->type == 128 ||
-				p->icmp->type == 129)
+		if (p->data_proto != IPPROTO_ICMPV6 || p->icmp->type == ICMP6_ECHO_REQUEST ||
+				p->icmp->type == ICMP6_ECHO_REPLY)
 			xlate_6to4_data(p);
 		else
 			xlate_6to4_icmp_error(p);
