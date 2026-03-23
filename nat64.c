@@ -258,8 +258,8 @@ static void host_send_icmp4_error(uint8_t type, uint8_t code, uint32_t word,
 		return;
 
 	orig_len = orig->header_len + orig->data_len;
-	if (orig_len > 576 - sizeof(struct ip4) - sizeof(struct icmp))
-		orig_len = 576 - sizeof(struct ip4) - sizeof(struct icmp);
+	if (orig_len > IP_MSS - sizeof(struct ip4) - sizeof(struct icmp))
+		orig_len = IP_MSS - sizeof(struct ip4) - sizeof(struct icmp);
 	icmp.type = type;
 	icmp.code = code;
 	icmp.word = htonl(word);
@@ -1142,8 +1142,8 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 		return;
 	}
 
-	if (sizeof(struct ip4) * 2 + sizeof(struct icmp) + p_em.data_len > 576)
-		p_em.data_len = 576 - sizeof(struct ip4) * 2 -
+	if (sizeof(struct ip4) * 2 + sizeof(struct icmp) + p_em.data_len > IP_MSS)
+		p_em.data_len = IP_MSS - sizeof(struct ip4) * 2 -
 						sizeof(struct icmp);
 
 	switch (p->icmp->type) {
