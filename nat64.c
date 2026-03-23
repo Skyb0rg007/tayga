@@ -439,9 +439,9 @@ static void xlate_4to6_data(struct pkt *p)
 			slog(LOG_WARNING, "error writing packet to tun "
 					"device: %s\n", strerror(errno));
 	} else {
-		header.ip6_frag.next_header = header.ip6.next_header;
-		header.ip6_frag.reserved = 0;
-		header.ip6_frag.ident = htonl(ntohs(p->ip4->ident));
+		header.ip6_frag.ip6f_nxt = header.ip6.next_header;
+		header.ip6_frag.ip6f_reserved = 0;
+		header.ip6_frag.ip6f_ident = htonl(ntohs(p->ip4->ident));
 
 		header.ip6.next_header = IPPROTO_FRAGMENT;
 
@@ -457,7 +457,7 @@ static void xlate_4to6_data(struct pkt *p)
 
 			header.ip6.payload_length =
 				htons(sizeof(struct ip6_frag) + frag_size);
-			header.ip6_frag.offset_flags = htons(off);
+			header.ip6_frag.ip6f_offlg = htons(off);
 
 			iov[1].iov_base = p->data;
 			iov[1].iov_len = frag_size;
@@ -467,8 +467,8 @@ static void xlate_4to6_data(struct pkt *p)
 			off += frag_size;
 
 			if (p->data_len || (p->ip4->flags_offset &
-							htons(IP4_F_MF)))
-				header.ip6_frag.offset_flags |= htons(IP6_F_MF);
+							htons(IP_MF)))
+				header.ip6_frag.ip6f_offlg |= IP6F_MORE_FRAG;
 
 			if (writev(gcfg.tun_fd, iov, 2) < 0) {
 				slog(LOG_WARNING, "error writing packet to "
@@ -510,7 +510,7 @@ static int parse_ip4(struct pkt *p)
 	p->data_proto = p->ip4->proto;
 
 	if (p->data_proto == IPPROTO_ICMP) { /* ICMPv4 */
-		if (p->ip4->flags_offset & htons(IP4_F_MASK | IP4_F_MF)) {
+		if (p->ip4->flags_offset & htons(IP_OFFMASK | IP_MF)) {
 			log_pkt4(LOG_OPT_DROP,p,"ICMP Fragmented");
 			return ERROR_DROP;
 		}
@@ -527,13 +527,13 @@ static int parse_ip4(struct pkt *p)
 		log_pkt4(LOG_OPT_DROP,p,"IPv4 Packet with IPv6-Only Proto");
 		return ERROR_DROP;
 	} else {
-		if ((p->ip4->flags_offset & htons(IP4_F_MF)) &&
+		if ((p->ip4->flags_offset & htons(IP_MF)) &&
 				(p->data_len & 0x7)) {
 			log_pkt4(LOG_OPT_DROP,p,"Fragment Misalignment");
 			return ERROR_DROP;
 		}
 
-		if ((uint32_t)((ntohs(p->ip4->flags_offset) & IP4_F_MASK) * 8) +
+		if ((uint32_t)((ntohs(p->ip4->flags_offset) & IP_OFFMASK) * 8) +
 				p->data_len > UINT16_MAX) {
 			log_pkt4(LOG_OPT_DROP,p,"Fragment Exceeds Max Length");
 			return ERROR_DROP;
@@ -855,13 +855,13 @@ static void xlate_header_6to4(struct pkt *p, struct ip4 *ip4,
 	ip4->length = htons(sizeof(struct ip4) + payload_length);
 	/* Have an IPv6 fragment header, translate to a v4 fragment */
 	if (p->ip6_frag) {
-		ip4->ident = htons(ntohl(p->ip6_frag->ident) & 0xffff);
+		ip4->ident = htons(ntohl(p->ip6_frag->ip6f_ident) & 0xffff);
 		ip4->flags_offset =
-			htons(ntohs(p->ip6_frag->offset_flags) >> 3);
-		if (p->ip6_frag->offset_flags & htons(IP6_F_MF))
-			ip4->flags_offset |= htons(IP4_F_MF);
+			htons(ntohs(p->ip6_frag->ip6f_offlg) >> 3);
+		if (p->ip6_frag->ip6f_offlg & IP6F_MORE_FRAG)
+			ip4->flags_offset |= htons(IP_MF);
 		/* Always clear DF bit */
-		ip4->flags_offset &= ~htons(IP4_F_DF);
+		ip4->flags_offset &= ~htons(IP_DF);
 	/* Smol packets can be fragmented downstream */
 	} else if (p->header_len + payload_length <= MTU_MIN) {
 		/* Need to generate a psuedo-random ident value
@@ -877,7 +877,7 @@ static void xlate_header_6to4(struct pkt *p, struct ip4 *ip4,
 	/* Packets > 1280 must kick back a Packet Too Big */
 	} else {
 		ip4->ident = 0;
-		ip4->flags_offset = htons(IP4_F_DF);
+		ip4->flags_offset = htons(IP_DF);
 	}
 	ip4->ttl = p->ip6->hop_limit;
 	ip4->proto = p->data_proto == IPPROTO_ICMPV6 ? IPPROTO_ICMP : p->data_proto;
@@ -890,7 +890,7 @@ static int xlate_payload_6to4(struct pkt *p, struct ip4 *ip4, int em)
 	uint16_t cksum;
 
 	/* Do not adjust fragments */
-	if (p->ip6_frag && (p->ip6_frag->offset_flags & ntohs(IP6_F_MASK)))
+	if (p->ip6_frag && (p->ip6_frag->ip6f_offlg & IP6F_OFF_MASK))
 		return ERROR_NONE;
 
 	switch (p->data_proto) {
@@ -1062,18 +1062,18 @@ static int parse_ip6(struct pkt *p,int em)
 			return ERROR_DROP;
 		}
 		p->ip6_frag = (struct ip6_frag *)p->data;
-		p->data_proto = p->ip6_frag->next_header;
+		p->data_proto = p->ip6_frag->ip6f_nxt;
 		p->data += sizeof(struct ip6_frag);
 		p->data_len -= sizeof(struct ip6_frag);
 		p->header_len += sizeof(struct ip6_frag);
 
-		if ((p->ip6_frag->offset_flags & htons(IP6_F_MF)) &&
+		if ((p->ip6_frag->ip6f_offlg & IP6F_MORE_FRAG) &&
 				(p->data_len & 0x7)) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragment Misaligned");
 			return ERROR_DROP;
 		}
 
-		if ((uint32_t)(ntohs(p->ip6_frag->offset_flags) & IP6_F_MASK) +
+		if ((uint32_t)(ntohs(p->ip6_frag->ip6f_offlg & IP6F_OFF_MASK)) +
 				p->data_len > UINT16_MAX) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragment Reassembly exceeds max size");
 			return ERROR_DROP;
@@ -1081,8 +1081,8 @@ static int parse_ip6(struct pkt *p,int em)
 	}
 
 	if (p->data_proto == IPPROTO_ICMPV6) {
-		if (p->ip6_frag && (p->ip6_frag->offset_flags &
-					htons(IP6_F_MASK | IP6_F_MF))) {
+		if (p->ip6_frag && (p->ip6_frag->ip6f_offlg &
+					(IP6F_OFF_MASK | IP6F_MORE_FRAG))) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragmented ICMP");
 			return ERROR_DROP;
 		}

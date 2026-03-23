@@ -28,6 +28,7 @@
 #include <sys/uio.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/ip6.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -136,9 +137,9 @@ struct ip4 {
 static_assert(alignof(struct ip4) <= 4,"Struct IP4 must be 4-byte aligned");
 static_assert(sizeof(struct ip4) == 20,"Struct IP4 must be 20 bytes long");
 
-#define IP4_F_DF	0x4000
-#define IP4_F_MF	0x2000
-#define IP4_F_MASK	0x1fff
+static_assert(IP_DF == 0x4000, "IP_DF is defined");
+static_assert(IP_MF == 0x2000, "IP_MF is defined");
+static_assert(IP_OFFMASK == 0x1fff, "IP_OFFMASK is defined");
 
 struct ip6 {
 	uint32_t ver_tc_fl; /* 31-28: ver==6, 27-20: traf cl, 19-0: flow lbl */
@@ -152,18 +153,16 @@ struct ip6 {
 static_assert(alignof(struct ip6) <= 4,"Struct IP6 must be 4-byte aligned");
 static_assert(sizeof(struct ip6) == 40,"Struct IP6 must be 40 bytes long");
 
-struct ip6_frag {
-	uint8_t next_header;
-	uint8_t reserved;
-	uint16_t offset_flags; /* 15-3: frag offset, 2-0: flags */
-	uint32_t ident;
-};
-
 static_assert(alignof(struct ip6_frag) <= 4,"Struct ip6_frag must be 4-byte aligned");
 static_assert(sizeof(struct ip6_frag) == 8,"Struct ip6_frag must be 8 bytes long");
 
-#define IP6_F_MF	0x0001
-#define IP6_F_MASK	0xfff8
+#if __BYTE_ORDER == __BIG_ENDIAN
+static_assert(IP6F_MORE_FRAG == 0x0001, "IP6F_MORE_FRAG must be defined");
+static_assert(IP6F_OFF_MASK == 0xfff8, "IP6F_OFF_MASK must be defined");
+#else
+static_assert(IP6F_MORE_FRAG == 0x0100, "IP6F_MORE_FRAG must be defined");
+static_assert(IP6F_OFF_MASK == 0xf8ff, "IP6F_OFF_MASK must be defined");
+#endif
 
 struct icmp {
 	uint8_t type;
