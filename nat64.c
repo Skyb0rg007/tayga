@@ -227,7 +227,7 @@ static void host_send_icmp4(uint8_t tos, struct in_addr *src,
 				data_len);
 	header.ip4.ident = 0;
 	header.ip4.flags_offset = 0;
-	header.ip4.ttl = 64;
+	header.ip4.ttl = DEFAULT_TTL;
 	header.ip4.proto = 1;
 	header.ip4.cksum = 0;
 	header.ip4.src = *src;
@@ -534,7 +534,7 @@ static int parse_ip4(struct pkt *p)
 		}
 
 		if ((uint32_t)((ntohs(p->ip4->flags_offset) & IP4_F_MASK) * 8) +
-				p->data_len > 65535) {
+				p->data_len > UINT16_MAX) {
 			log_pkt4(LOG_OPT_DROP,p,"Fragment Exceeds Max Length");
 			return ERROR_DROP;
 		}
@@ -677,7 +677,7 @@ static void xlate_4to6_icmp_error(struct pkt *p)
 			log_pkt4(LOG_OPT_DROP,p,"Parameter Problem Invalid Code");
 			return;
 		}
-		static const int32_t new_ptr_tbl[] = {0,1,4,4,-1,-1,-1,-1,7,6,-1,-1,8,8,8,8,24,24,24,24};
+		static const int32_t new_ptr_tbl[20] = {0,1,4,4,-1,-1,-1,-1,7,6,-1,-1,8,8,8,8,24,24,24,24};
 		int32_t old_ptr = (ntohl(p->icmp->word) >> 24);
 		if(old_ptr > 19) {
 			log_pkt4(LOG_OPT_DROP,p,"Parameter Problem Invalid Pointer");
@@ -786,7 +786,7 @@ static void host_send_icmp6(uint8_t tc, struct in6_addr *src,
 	header.ip6.ver_tc_fl = htonl((0x6 << 28) | (tc << 20));
 	header.ip6.payload_length = htons(sizeof(header.icmp) + data_len);
 	header.ip6.next_header = 58;
-	header.ip6.hop_limit = 64;
+	header.ip6.hop_limit = DEFAULT_TTL;
 	header.ip6.src = *src;
 	header.ip6.dest = *dest;
 	header.icmp = *icmp;
@@ -1074,7 +1074,7 @@ static int parse_ip6(struct pkt *p,int em)
 		}
 
 		if ((uint32_t)(ntohs(p->ip6_frag->offset_flags) & IP6_F_MASK) +
-				p->data_len > 65535) {
+				p->data_len > UINT16_MAX) {
 			if(!em) log_pkt6(LOG_OPT_DROP,p,"Fragment Reassembly exceeds max size");
 			return ERROR_DROP;
 		}
@@ -1189,7 +1189,7 @@ static void xlate_6to4_icmp_error(struct pkt *p)
 	case 4: /* Parameter Problem */
 		/* Erroneous Header Field Encountered */
 		if (p->icmp->code == 0) {
-			static const int32_t new_ptr_tbl[] = {0,1,-1,-1,2,2,9,8};
+			static const int32_t new_ptr_tbl[8] = {0,1,-1,-1,2,2,9,8};
 			int32_t old_ptr = ntohl(p->icmp->word);
 			int32_t new_ptr;
 			if(old_ptr > 39) {

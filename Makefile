@@ -25,6 +25,7 @@ INSTALL ?= install
 IP ?= ip
 SYSTEMCTL ?= /bin/systemctl
 PANDOC ?= pandoc
+PYTHON3 ?= python3
 
 INSTALL_DATA ?= $(INSTALL) -m 644
 INSTALL_PROGRAM ?= $(INSTALL)
@@ -76,7 +77,7 @@ define make-version-header
 endef
 
 # Compile Tayga
-tayga: $(SOURCES)
+tayga: $(SOURCES) tayga.h
 	$(eval $(make-version-header))
 	$(CC) $(CFLAGS) -o tayga $(SOURCES) $(LDFLAGS) $(LDLIBS)
 
@@ -108,14 +109,14 @@ unit_conffile: $(TEST_FILES) test/unit_conffile.c conffile.c addrmap.c tayga.h l
 .PHONY: integration
 integration: tayga
 	-$(IP) netns add tayga-test
-	$(IP) netns exec tayga-test python3 test/mapfile.py
-	$(IP) netns exec tayga-test python3 test/addressing.py
-	$(IP) netns exec tayga-test python3 test/mapping.py
-	$(IP) netns exec tayga-test python3 test/translate.py
-	$(IP) netns exec tayga-test python3 test/segment.py
+	$(IP) netns exec tayga-test $(PYTHON3) test/mapfile.py
+	$(IP) netns exec tayga-test $(PYTHON3) test/addressing.py
+	$(IP) netns exec tayga-test $(PYTHON3) test/mapping.py
+	$(IP) netns exec tayga-test $(PYTHON3) test/translate.py
+	$(IP) netns exec tayga-test $(PYTHON3) test/segment.py
 # Do not run big-endian tests by default
 ifdef WITH_BIG_ENDIAN
-	$(IP) netns exec tayga-test python3 test/bigendian.py
+	$(IP) netns exec tayga-test $(PYTHON3) test/bigendian.py
 endif
 	$(IP) netns del tayga-test
 

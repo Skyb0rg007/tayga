@@ -189,6 +189,7 @@ static_assert(sizeof(struct icmp) == 8,"Struct ICMP must be 8 bytes long");
 /* Maximum config arguments in parser */
 #define MAX_ARGS 10
 
+#define DEFAULT_TTL 64
 
 /* TAYGA data definitions */
 
