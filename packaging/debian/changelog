@@ -1,0 +1,45 @@
+tayga (0.9.6) unstable; urgency=medium
+
+  * Zero UDP Checksum behavior by @apalrd
+  * Section 5.1 test by @apalrd
+  * Container build pipeline by @apalrd
+  * Infrastructure updates by @Skyb0rg007
+  * Fix serialization of dynamic map if time_t != long by @Skyb0rg007
+  * Update README to fix #78 by @Skyb0rg007
+  * Implement packet drop/reject logging by @apalrd
+  * Preliminary Github Actions by @apalrd
+  * make: allow CC, CFLAGS and LDFLAGS to be defined by the caller by @fichtner
+  * Resolve clang warnings by @apalrd
+  * Make install by @apalrd
+  * Fix ipv6-addr check by @apalrd
+  * Offlink MTU Configuration by @apalrd
+  * Allow compile-time override of configuration path by @maurice-w
+  * OpenRC init script by @apalrd
+  * Improve Systemd Units for all distros by @apalrd
+  * Unit test for conf-file by @apalrd
+  * remove strict frag header and related code by @apalrd
+  * Make directories that don't exist by @apalrd
+  * Improve Github Actions by @apalrd
+  * Basic Test by @apalrd
+  * Resolve Build w/o LTO by @apalrd
+  * Fix simple README.md typo by @UnderEu
+  * Update README.md by @UnderEu
+  * Various fixes to packaging workflow by @bonktree
+  * tayga daemon: create pidfile with saner permissions by @bonktree
+  * Use matrix jobs in CI/CD to not duplicate code by @alexaka1
+  * Fix whitespace by @apalrd
+  * Log dynamic pool assignments by @apalrd
+  * systemd integration by @Skyb0rg007
+  * Make tayga buildable with gcc -Wextra by @bonktree
+  * Makefile changes for v0.9.6 by @apalrd
+  * Documentation improvements by @apalrd
+  * Resolve help query by @apalrd
+  * Correct link to CLAT documentation by @NorwegianRockCat
+  * Resolve log related crash by @apalrd
+  * Add ExecSearchPath to tayga@.service by @eastmancr
+  * Container example configuration for NAT64 by @apalrd
+  * Fix github actions by @apalrd
+  * Clean before make by @apalrd
+  * Run integration test with sudo by @apalrd
+
+ -- Andrew Palardy <andrew@apalrd.net>  Fri, 2 Jan 2026 12:00:00 -0500
